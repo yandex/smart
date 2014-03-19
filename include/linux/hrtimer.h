@@ -141,6 +141,7 @@ struct hrtimer_sleeper {
  * @get_time:		function to retrieve the current time of the clock
  * @softirq_time:	the time when running the hrtimer queue in the softirq
  * @offset:		offset of this clock to the monotonic base
+ * @next:		time of the next event on this clock base
  */
 struct hrtimer_clock_base {
 	struct hrtimer_cpu_base	*cpu_base;
@@ -151,6 +152,7 @@ struct hrtimer_clock_base {
 	ktime_t			(*get_time)(void);
 	ktime_t			softirq_time;
 	ktime_t			offset;
+	ktime_t			next;
 };
 
 enum  hrtimer_base_type {

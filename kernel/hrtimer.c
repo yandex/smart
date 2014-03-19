@@ -900,6 +900,8 @@ EXPORT_SYMBOL_GPL(hrtimer_forward);
 static int enqueue_hrtimer(struct hrtimer *timer,
 			   struct hrtimer_clock_base *base)
 {
+	ktime_t expires;
+
 	debug_activate(timer);
 
 	timerqueue_add(&base->active, &timer->node);
@@ -910,6 +912,10 @@ static int enqueue_hrtimer(struct hrtimer *timer,
 	 * state of a possibly running callback.
 	 */
 	timer->state |= HRTIMER_STATE_ENQUEUED;
+
+	expires = ktime_sub(hrtimer_get_expires(timer), base->offset);
+	if (ktime_compare(base->next, expires) > 0)
+		base->next = expires;
 
 	return (&timer->node == base->active.next);
 }
@@ -947,8 +953,10 @@ static void __remove_hrtimer(struct hrtimer *timer,
 		}
 #endif
 	}
-	if (!timerqueue_getnext(&base->active))
+	if (!timerqueue_getnext(&base->active)) {
 		base->cpu_base->active_bases &= ~(1 << base->index);
+		base->next = ktime_set(KTIME_SEC_MAX, 0);
+	}
 out:
 	timer->state = newstate;
 }
@@ -1300,6 +1308,7 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
  */
 void hrtimer_interrupt(struct clock_event_device *dev)
 {
+	struct hrtimer_clock_base *base;
 	struct hrtimer_cpu_base *cpu_base = &__get_cpu_var(hrtimer_bases);
 	ktime_t expires_next, now, entry_time, delta;
 	int i, retries = 0;
@@ -1322,7 +1331,6 @@ retry:
 	cpu_base->expires_next.tv64 = KTIME_MAX;
 
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
-		struct hrtimer_clock_base *base;
 		struct timerqueue_node *node;
 		ktime_t basenow;
 
@@ -1351,19 +1359,32 @@ retry:
 			 */
 
 			if (basenow.tv64 < hrtimer_get_softexpires_tv64(timer)) {
-				ktime_t expires;
-
-				expires = ktime_sub(hrtimer_get_expires(timer),
-						    base->offset);
-				if (expires.tv64 < 0)
-					expires.tv64 = KTIME_MAX;
-				if (expires.tv64 < expires_next.tv64)
-					expires_next = expires;
+				base->next = ktime_sub(hrtimer_get_expires(timer),
+						       base->offset);
 				break;
 			}
 
 			__run_hrtimer(timer, &basenow);
 		}
+	}
+
+	/*
+	 * Because timer handler may add new timer on a different clock base,
+	 * we need to find next expiry only after we execute all timers.
+	 */
+	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
+		ktime_t expires;
+
+		if (!(cpu_base->active_bases & (1 << i)))
+			continue;
+
+		base = cpu_base->clock_base + i;
+		expires = base->next;
+
+		if (expires.tv64 < 0)
+			expires.tv64 = KTIME_MAX;
+		if (expires.tv64 < expires_next.tv64)
+			expires_next = expires;
 	}
 
 	/*
