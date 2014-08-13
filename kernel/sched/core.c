@@ -7413,6 +7413,10 @@ struct task_group *sched_create_group(struct task_group *parent)
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
 
+#ifdef CONFIG_SMART
+	tg->smart = parent->smart;
+#endif
+
 	return tg;
 
 err:
@@ -7877,13 +7881,119 @@ static int cpu_cgroup_can_attach(struct cgroup *cgrp,
 	return 0;
 }
 
+#ifdef CONFIG_SMART
+
+int sched_smart_prio = 10;
+
+static void __update_task_smart(struct task_struct *task,
+				struct cgroup *cgrp)
+{
+	struct task_group *tg;
+	int policy;
+	struct sched_param param;
+
+	if (!task->mm)
+		return;
+
+	tg = cgroup_tg(cgrp);
+
+	if (!rt_task(task) && tg->smart > 0) {
+		policy = SCHED_RR;
+		param.sched_priority = sched_smart_prio;
+	} else if (rt_task(task) && tg->smart <= 0) {
+		policy = SCHED_NORMAL;
+		param.sched_priority = 0;
+	} else
+		return;
+
+	WARN_ON(sched_setscheduler_nocheck(task, policy, &param));
+}
+
+static void update_task_smart(struct task_struct *task,
+			      struct cgroup_scanner *scan)
+{
+	__update_task_smart(task, scan->cg);
+}
+
+static int update_cgrp_smart(struct cgroup *cgrp)
+{
+	struct cgroup_scanner scan;
+
+	scan.cg = cgrp;
+	scan.test_task = NULL;
+	scan.process_task = update_task_smart;
+	scan.heap = NULL;
+
+	return cgroup_scan_tasks(&scan);
+}
+
+static u64 cpu_smart_read(struct cgroup *cgrp, struct cftype *cft)
+{
+	return cgroup_tg(cgrp)->smart == 1 ? 1 : 0;
+}
+
+static int cpu_smart_write(struct cgroup *cgrp, struct cftype *cftype,
+			   u64 enable)
+{
+	struct task_group *tg = cgroup_tg(cgrp);
+
+	if (enable != 0 && enable != 1)
+		return -EINVAL;
+
+	/* Don't allow to enable smart for root cgroup */
+	if (!tg->se[0])
+		return -EINVAL;
+
+	mutex_lock(&smart_mutex);
+	tg->smart = (smart_enabled() ? 1 : -1) * enable;
+	update_cgrp_smart(cgrp);
+	mutex_unlock(&smart_mutex);
+
+	return 0;
+}
+
+static int update_smart_tg(struct task_group *tg, void *data)
+{
+	int ret = 0;
+	int enabled = smart_enabled();
+
+	if (enabled && tg->smart < 0) {
+		tg->smart = 1;
+		ret = update_cgrp_smart(tg->css.cgroup);
+	} else if (!enabled && tg->smart > 0) {
+		tg->smart = -1;
+		ret = update_cgrp_smart(tg->css.cgroup);
+	}
+
+	return ret;
+}
+
+int smart_update_globally(void)
+{
+	int ret;
+
+	rcu_read_lock();
+	ret = walk_tg_tree(update_smart_tg, tg_nop, NULL);
+	rcu_read_unlock();
+
+	return ret;
+}
+#else /* CONFIG_SMART */
+static void __update_task_smart(struct task_struct *task,
+				struct cgroup *cgrp)
+{
+}
+#endif  /* CONFIG_SMART */
+
 static void cpu_cgroup_attach(struct cgroup *cgrp,
 			      struct cgroup_taskset *tset)
 {
 	struct task_struct *task;
 
-	cgroup_taskset_for_each(task, cgrp, tset)
+	cgroup_taskset_for_each(task, cgrp, tset) {
 		sched_move_task(task);
+		__update_task_smart(task, cgrp);
+	}
 }
 
 static void
@@ -8214,6 +8324,13 @@ static struct cftype cpu_files[] = {
 		.write_u64 = cpu_rt_period_write_uint,
 	},
 #endif
+#ifdef CONFIG_SMART
+	{
+		.name = "smart",
+		.read_u64 = cpu_smart_read,
+		.write_u64 = cpu_smart_write,
+	},
+#endif
 	{ }	/* terminate */
 };
 
@@ -8231,6 +8348,13 @@ struct cgroup_subsys cpu_cgroup_subsys = {
 	.early_init	= 1,
 };
 
+#else /* CONFIG_CGROUP_SCHED */
+#ifdef CONFIG_SMART
+int smart_update_globally(void)
+{
+	return 0;
+}
+#endif
 #endif	/* CONFIG_CGROUP_SCHED */
 
 void dump_cpu_task(int cpu)

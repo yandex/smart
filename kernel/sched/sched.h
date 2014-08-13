@@ -165,6 +165,10 @@ struct task_group {
 #endif
 
 	struct cfs_bandwidth cfs_bandwidth;
+
+#ifdef CONFIG_SMART
+	int smart;
+#endif
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -1434,6 +1438,7 @@ struct smart_gathering {
 
 extern struct static_key __smart_initialized;
 extern struct static_key __smart_enabled;
+extern struct mutex smart_mutex;
 extern struct static_key smart_cfs_gather;
 extern struct static_key smart_cfs_throttle;
 
@@ -1636,6 +1641,7 @@ static inline void reset_smart_score(struct sched_rt_entity *rt_se)
 void smart_tick(int cpu);
 int smart_migrate_task(struct task_struct *p, int prev_cpu, int dest_cpu);
 void build_smart_topology(void);
+int smart_update_globally(void);
 
 #else /* CONFIG_SMART */
 static inline void build_smart_topology(void)

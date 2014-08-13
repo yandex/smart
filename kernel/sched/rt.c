@@ -2405,6 +2405,14 @@ void build_smart_topology(void)
 	if (!check_smart_data()) {
 		printk(KERN_INFO "smart: enabled\n");
 		static_key_slow_inc(&__smart_initialized);
+		if (!was_initialized) {
+			smart_update_globally();
+			printk(KERN_INFO "smart: enabled globally\n");
+		}
+	} else if (was_initialized) {
+		printk(KERN_ALERT "smart: can't build smart topology\n");
+		smart_update_globally();
+		printk(KERN_ALERT "smart: disabled globally\n");
 	}
 
 	rcu_read_unlock();
