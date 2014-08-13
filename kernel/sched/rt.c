@@ -2319,6 +2319,13 @@ static int cpu_with_number(int number, cpumask_t *mask)
 	return -1;
 }
 
+static int __init nosmart_setup(char *str)
+{
+	static_key_slow_dec(&__smart_enabled);
+	return 0;
+}
+early_param("nosmart", nosmart_setup);
+
 void build_smart_topology(void)
 {
 	int cpu;
