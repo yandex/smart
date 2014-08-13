@@ -802,6 +802,17 @@ config NUMA_BALANCING
 
 	  This system will be inactive on UMA systems.
 
+config SMART
+	bool "Enable SMART rt scheduler extension"
+	default y
+	depends on SMP
+	help
+	  This option enables SMART (Simultaneous Multithreading-Aware Real-Time)
+	  scheduler exitension. SMART allows efficiently use of real-time
+	  scheduler for runtime tasks on modern multi-cores CPUs with
+	  enabled hyper-threading.
+	  Do not use for hard real-time purposes.
+
 menuconfig CGROUPS
 	boolean "Control Group support"
 	depends on EVENTFD
