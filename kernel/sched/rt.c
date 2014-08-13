@@ -2247,6 +2247,82 @@ void print_rt_stats(struct seq_file *m, int cpu)
 #endif /* CONFIG_SCHED_DEBUG */
 
 #ifdef CONFIG_SMART
+int proc_smart_enable(struct ctl_table *table, int write,
+		      void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int enable = static_key_enabled(&__smart_enabled);
+	int ret;
+
+	build_smart_topology();
+
+	mutex_lock(&smart_mutex);
+
+	if (write && !static_key_false(&__smart_initialized)) {
+		ret = -EBUSY;
+		goto exit;
+	}
+
+	table->data = &enable;
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (ret)
+		goto exit;
+
+	if (write) {
+		if (enable && !static_key_enabled(&__smart_enabled)) {
+			static_key_slow_inc(&__smart_enabled);
+			smart_update_globally();
+		}
+
+		if (!enable && static_key_enabled(&__smart_enabled)) {
+			static_key_slow_dec(&__smart_enabled);
+			smart_update_globally();
+		}
+	}
+
+exit:
+	mutex_unlock(&smart_mutex);
+
+	return ret;
+}
+
+int proc_smart_static_key(struct ctl_table *table, int write,
+			  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct static_key *key;
+	int enable;
+	int ret;
+	static DEFINE_MUTEX(mutex);
+
+	mutex_lock(&mutex);
+
+	key = table->data;
+	enable = static_key_enabled(key);
+
+	if (write && !static_key_false(&__smart_initialized)) {
+		ret = -EBUSY;
+		goto exit;
+	}
+
+	table->data = &enable;
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (ret)
+		goto exit;
+
+	if (write) {
+		if (enable && !static_key_enabled(key))
+			static_key_slow_inc(key);
+
+		if (!enable && static_key_enabled(key))
+			static_key_slow_dec(key);
+	}
+
+exit:
+	table->data = key;
+	mutex_unlock(&mutex);
+
+	return ret;
+}
+
 int check_smart_data(void)
 {
 	int cpu, core;

@@ -128,6 +128,7 @@ static int __maybe_unused one = 1;
 static int __maybe_unused two = 2;
 static int __maybe_unused three = 3;
 static unsigned long one_ul = 1;
+static int ninety_eight = 98;
 static int one_hundred = 100;
 #ifdef CONFIG_PRINTK
 static int ten_thousand = 10000;
@@ -178,6 +179,13 @@ extern int no_unaligned_warning;
 #ifdef CONFIG_SMART
 struct static_key smart_cfs_gather = STATIC_KEY_INIT_TRUE;
 struct static_key smart_cfs_throttle = STATIC_KEY_INIT_TRUE;
+
+extern int sched_smart_prio;
+
+int proc_smart_static_key(struct ctl_table *table, int write,
+			  void __user *buffer, size_t *lenp, loff_t *ppos);
+int proc_smart_enable(struct ctl_table *table, int write,
+		      void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
 #ifdef CONFIG_PROC_SYSCTL
@@ -444,6 +452,37 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &one,
+	},
+#endif
+#ifdef CONFIG_SMART
+	{
+		.procname	= "sched_smart_enable",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_smart_enable,
+	},
+	{
+		.procname	= "sched_smart_prio",
+		.data		= &sched_smart_prio,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &ninety_eight,
+	},
+	{
+		.procname	= "sched_smart_gathering",
+		.data		= &smart_cfs_gather,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_smart_static_key,
+	},
+	{
+		.procname	= "sched_smart_throttle",
+		.data		= &smart_cfs_throttle,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_smart_static_key,
 	},
 #endif
 #ifdef CONFIG_PROVE_LOCKING
