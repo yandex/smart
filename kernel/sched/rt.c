@@ -15,6 +15,14 @@ struct static_key __smart_enabled = STATIC_KEY_INIT_TRUE;
 DEFINE_MUTEX(smart_mutex);
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+
+static int smart_find_lowest_rq(struct task_struct *task, bool wakeup);
+
+#else /* CONFIG_SMART */
+static inline int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
+{
+	return -1;
+}
 #endif /* CONFIG_SMART */
 
 int sched_rr_timeslice = RR_TIMESLICE;
@@ -1211,6 +1219,7 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 		enqueue_pushable_task(rq, p);
 
 	inc_nr_running(rq);
+	release_core(cpu_of(rq));
 }
 
 static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
@@ -1277,6 +1286,13 @@ select_task_rq_rt(struct task_struct *p, int sd_flag, int flags)
 	/* For anything but wake ups, just return the task_cpu */
 	if (sd_flag != SD_BALANCE_WAKE && sd_flag != SD_BALANCE_FORK)
 		goto out;
+
+	if (smart_enabled()) {
+		int target = smart_find_lowest_rq(p, true);
+		if (likely(target != -1))
+			cpu = target;
+		goto out;
+	}
 
 	rq = cpu_rq(cpu);
 
@@ -1580,10 +1596,17 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 	int cpu;
 
 	for (tries = 0; tries < RT_MAX_TRIES; tries++) {
-		cpu = find_lowest_rq(task);
+		if (smart_enabled())
+			cpu = smart_find_lowest_rq(task, false);
+		else
+			cpu = find_lowest_rq(task);
 
-		if ((cpu == -1) || (cpu == rq->cpu))
+		if ((cpu == -1) || (cpu == rq->cpu)) {
+			if (cpu == rq->cpu)
+				release_core(cpu);
+
 			break;
+		}
 
 		lowest_rq = cpu_rq(cpu);
 
@@ -1602,6 +1625,7 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 				     !task->on_rq)) {
 
 				double_unlock_balance(rq, lowest_rq);
+				release_core(cpu);
 				lowest_rq = NULL;
 				break;
 			}
@@ -1614,6 +1638,7 @@ static struct rq *find_lock_lowest_rq(struct task_struct *task, struct rq *rq)
 		/* try again */
 		double_unlock_balance(rq, lowest_rq);
 		lowest_rq = NULL;
+		release_core(cpu);
 	}
 
 	return lowest_rq;

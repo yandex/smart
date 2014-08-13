@@ -1262,8 +1262,12 @@ int select_task_rq(struct task_struct *p, int sd_flags, int wake_flags)
 	 *   not worry about this generic constraint ]
 	 */
 	if (unlikely(!cpumask_test_cpu(cpu, tsk_cpus_allowed(p)) ||
-		     !cpu_online(cpu)))
+		     !cpu_online(cpu))) {
+		if (smart_enabled() && task_has_rt_policy(p) && cpu >= 0)
+			release_core(cpu);
+
 		cpu = select_fallback_rq(task_cpu(p), p);
+	}
 
 	return cpu;
 }
