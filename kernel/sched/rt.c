@@ -15,6 +15,7 @@ struct static_key __smart_enabled = STATIC_KEY_INIT_TRUE;
 DEFINE_MUTEX(smart_mutex);
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+struct smart_node_data smart_node_data[MAX_NUMNODES] ____cacheline_aligned_in_smp;
 
 static int smart_find_lowest_rq(struct task_struct *task, bool wakeup);
 
@@ -1218,6 +1219,7 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 	if (!task_current(rq, p) && p->nr_cpus_allowed > 1)
 		enqueue_pushable_task(rq, p);
 
+	inc_node_running(cpu_of(rq));
 	inc_nr_running(rq);
 	release_core(cpu_of(rq));
 }
@@ -1231,6 +1233,7 @@ static void dequeue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 
 	dequeue_pushable_task(rq, p);
 
+	dec_node_running(cpu_of(rq));
 	dec_nr_running(rq);
 }
 
@@ -2316,12 +2319,31 @@ static int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
 	int prev_cpu = task_cpu(task);
 	int best_cpu;
 	int attempts;
+	int this_node_rt, other_node_rt;
+	int node, this_node;
 
 	if (task->nr_cpus_allowed == 1)
 		return -1; /* No other targets possible */
 
 	rcu_read_lock();
 
+	if (wakeup) {
+		this_node = cpu_to_node(prev_cpu);
+		this_node_rt = node_running(this_node);
+
+		for_each_online_node(node) {
+			if (node == this_node)
+				continue;
+
+			other_node_rt = node_running(node);
+
+			if (this_node_rt > other_node_rt &&
+			    ((this_node_rt - other_node_rt) * 4 > this_node_rt)) {
+				this_node_rt = other_node_rt;
+				prev_cpu = core_node_sibling(prev_cpu);
+			}
+		}
+	}
 
 	for (attempts = 3; attempts; attempts--) {
 		best_cpu = find_rt_free_core(prev_cpu, task);
