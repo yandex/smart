@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 
 #ifdef CONFIG_SMART
+#include <linux/workqueue.h>
 #include <linux/jump_label.h>
 
 struct static_key __smart_initialized = STATIC_KEY_INIT_FALSE;
@@ -18,11 +19,25 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
 struct smart_node_data smart_node_data[MAX_NUMNODES] ____cacheline_aligned_in_smp;
 
 static int smart_find_lowest_rq(struct task_struct *task, bool wakeup);
+static void update_curr_smart(struct rq *rq, struct task_struct *p);
+static void pre_schedule_smart(struct rq *rq, struct task_struct *prev);
+
+static void smart_pull(struct work_struct *dummy);
+static DECLARE_WORK(smart_work, smart_pull);
+
 
 #else /* CONFIG_SMART */
 static inline int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
 {
 	return -1;
+}
+
+static void update_curr_smart(struct rq *rq, struct task_struct *p)
+{
+}
+
+static void pre_schedule_smart(struct rq *rq, struct task_struct *prev)
+{
 }
 #endif /* CONFIG_SMART */
 
@@ -1211,8 +1226,11 @@ enqueue_task_rt(struct rq *rq, struct task_struct *p, int flags)
 {
 	struct sched_rt_entity *rt_se = &p->rt;
 
-	if (flags & ENQUEUE_WAKEUP)
+	if (flags & ENQUEUE_WAKEUP) {
 		rt_se->timeout = 0;
+
+		reset_smart_score(rt_se);
+	}
 
 	enqueue_rt_entity(rt_se, flags & ENQUEUE_HEAD);
 
@@ -1845,6 +1863,8 @@ static void pre_schedule_rt(struct rq *rq, struct task_struct *prev)
 	/* Try to pull RT tasks here if we lower this rq's prio */
 	if (rq->rt.highest_prio.curr > prev->prio)
 		pull_rt_task(rq);
+
+	pre_schedule_smart(rq, prev);
 }
 
 static void post_schedule_rt(struct rq *rq)
@@ -2057,6 +2077,8 @@ static void task_tick_rt(struct rq *rq, struct task_struct *p, int queued)
 	struct sched_rt_entity *rt_se = &p->rt;
 
 	update_curr_rt(rq);
+
+	update_curr_smart(rq, p);
 
 	watchdog(rq, p);
 
@@ -2364,5 +2386,88 @@ static int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
 
 	rcu_read_unlock();
 	return best_cpu;
+}
+
+static void smart_pull(struct work_struct *dummy)
+{
+	int this_cpu = smp_processor_id();
+	int cpu;
+	struct rq *rq = cpu_rq(this_cpu);
+	struct task_struct *task;
+	int points;
+	struct task_struct *best_task = NULL;
+	int best_points = 2;
+
+	if (rq->rt.rt_nr_running > 0)
+		return;
+
+	if (core_acquired(this_cpu))
+		return;
+
+	rcu_read_lock();
+	for_each_online_cpu(cpu) {
+		if (cpu == cpu_core_id(cpu))
+			continue;
+
+		rq = cpu_rq(cpu);
+		if (!rq->rt.rt_nr_running)
+			continue;
+
+		task = ACCESS_ONCE(rq->curr);
+		if (!rt_task(task))
+			continue;
+
+		points = atomic_read(&task->rt.smart_score);
+		if (points > best_points) {
+			best_task = task;
+			best_points = points;
+		}
+	}
+
+	if (!best_task) {
+		rcu_read_unlock();
+		return;
+	}
+
+	get_task_struct(best_task);
+	rcu_read_unlock();
+
+	smart_migrate_task(best_task, task_cpu(best_task), this_cpu);
+
+	put_task_struct(best_task);
+}
+
+static void update_curr_smart(struct rq *this_rq, struct task_struct *p)
+{
+	int this_cpu = cpu_of(this_rq);
+	int cpu;
+	struct rq *rq;
+	int points = 0;
+
+	for_each_cpu(cpu, topology_thread_cpumask(this_cpu)) {
+		if (cpu == this_cpu)
+			continue;
+
+		rq = cpu_rq(cpu);
+
+		points += rq->nr_running;
+	}
+
+	if (points)
+		atomic_add(points, &p->rt.smart_score);
+}
+
+static void pre_schedule_smart(struct rq *rq, struct task_struct *prev)
+{
+	if (smart_enabled()) {
+		int cpu = cpu_of(rq);
+
+		if (cpu == cpu_core_id(cpu) && !rq->rt.rt_nr_running) {
+			/* Try to pull rt tasks */
+			raw_spin_unlock(&rq->lock);
+			schedule_work_on(cpu, &smart_work);
+			raw_spin_lock(&rq->lock);
+		}
+	}
 }
 #endif /* CONFIG_SMART */

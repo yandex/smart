@@ -1565,6 +1565,12 @@ static inline int find_rt_best_thread(int start_cpu, struct task_struct *task)
 	return best_cpu;
 }
 
+static inline void reset_smart_score(struct sched_rt_entity *rt_se)
+{
+	atomic_set(&rt_se->smart_score, 0);
+}
+
+int smart_migrate_task(struct task_struct *p, int prev_cpu, int dest_cpu);
 void build_smart_topology(void);
 
 #else /* CONFIG_SMART */
@@ -1586,6 +1592,10 @@ static inline void inc_node_running(int cpu)
 }
 
 static inline void dec_node_running(int cpu)
+{
+}
+
+static inline void reset_smart_score(struct sched_rt_entity *rt_se)
 {
 }
 

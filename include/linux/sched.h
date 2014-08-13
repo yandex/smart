@@ -1023,6 +1023,9 @@ struct sched_rt_entity {
 	/* rq "owned" by this entity/group: */
 	struct rt_rq		*my_q;
 #endif
+#ifdef CONFIG_SMART
+	atomic_t smart_score;
+#endif
 };
 
 

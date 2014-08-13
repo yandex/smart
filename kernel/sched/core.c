@@ -4920,6 +4920,41 @@ static int migration_cpu_stop(void *data)
 	return 0;
 }
 
+#ifdef CONFIG_SMART
+int smart_migrate_task(struct task_struct *p, int prev_cpu,
+		       int dest_cpu)
+{
+	unsigned long flags;
+	struct rq *rq;
+
+	rq = task_rq_lock(p, &flags);
+
+	/* Something has changed? Do nothing. */
+	if (unlikely(prev_cpu != cpu_of(rq)))
+		goto out;
+
+	if (unlikely(!rt_task(p)))
+		goto out;
+
+	if (p->nr_cpus_allowed == 1 ||
+	    !cpumask_test_cpu(dest_cpu, &p->cpus_allowed))
+		goto out;
+
+	if (p->on_rq) {
+		struct migration_arg arg = { p, dest_cpu };
+		/* Need help from migration thread: drop lock and wait. */
+		task_rq_unlock(rq, p, &flags);
+		stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
+		tlb_migrate_finish(p->mm);
+		return 0;
+	}
+out:
+	task_rq_unlock(rq, p, &flags);
+
+	return -1;
+}
+#endif
+
 #ifdef CONFIG_HOTPLUG_CPU
 
 /*
