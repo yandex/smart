@@ -813,6 +813,14 @@ config SMART
 	  enabled hyper-threading.
 	  Do not use for hard real-time purposes.
 
+config SMART_DEBUG
+	bool "Enable SMART debug features"
+	default y
+	depends on SMART
+	help
+	  This option adds gathering of SMART statistics. It's
+	  available via /proc/smart_stat interface.
+
 menuconfig CGROUPS
 	boolean "Control Group support"
 	depends on EVENTFD

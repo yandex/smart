@@ -1380,6 +1380,38 @@ static inline u64 irq_time_read(int cpu)
 #endif /* CONFIG_64BIT */
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 
+#ifdef CONFIG_SMART_DEBUG
+struct smart_stat {
+	u64 pull;
+	u64 balance_local;
+	u64 balance_remote;
+	u64 select_core;
+	u64 select_rcore;
+	u64 select_thread;
+	u64 select_rthread;
+	u64 select_busy;
+	u64 select_busy_curr;
+	u64 select_fallback;
+	u64 rt_pull;
+	u64 rt_push;
+};
+
+DECLARE_PER_CPU(struct smart_stat, smart_stat);
+#define smart_event(e) do { __get_cpu_var(smart_stat).e++; } while (0)
+#define smart_event_node(prev_cpu, next_cpu, local_event, remote_event) \
+	do {								\
+		if (prev_cpu >= 0 && next_cpu >= 0 &&			\
+		    cpu_to_node(prev_cpu) == cpu_to_node(next_cpu))	\
+			smart_event(local_event);			\
+		else							\
+			smart_event(remote_event);			\
+	} while (0)
+#else
+#define smart_event(e) do { } while (0)
+#define smart_event_node(prev_cpu, next_cpu, local_event, remote_event) \
+	do { } while (0)
+#endif /* CONFIG_SMART_DEBUG */
+
 #ifdef CONFIG_SMART
 struct smart_core_data {
 	int cpu_core_id;
@@ -1417,6 +1449,7 @@ static inline int cpu_core_id(int cpu)
 #define smart_data(cpu) per_cpu(smart_core_data, cpu_core_id(cpu))
 #define smart_node_ptr(cpu) smart_node_data[cpu_to_node(cpu)]
 #define smart_gathering_data(cpu) per_cpu(smart_gathering_data, cpu)
+#define smart_stats(cpu) per_cpu(smart_core_data, cpu_core_id(cpu)).stats
 
 static inline bool smart_enabled(void)
 {
@@ -1586,6 +1619,11 @@ static inline int find_rt_best_thread(int start_cpu, struct task_struct *task)
 	if (best_cpu != -1 &&
 	    min_running == cpu_rq(start_cpu)->rt.rt_nr_running)
 		best_cpu = -1;
+
+	if (best_cpu == -1 || best_cpu == start_cpu)
+		smart_event(select_busy_curr);
+	else
+		smart_event(select_busy);
 
 	return best_cpu;
 }

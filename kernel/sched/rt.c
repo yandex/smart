@@ -9,7 +9,68 @@
 
 #ifdef CONFIG_SMART
 #include <linux/workqueue.h>
+#include <linux/proc_fs.h>
+
+#ifdef CONFIG_SMART_DEBUG
+#include <linux/seq_file.h>
 #include <linux/jump_label.h>
+
+DEFINE_PER_CPU(struct smart_stat, smart_stat);
+
+static struct proc_dir_entry *smart_pde;
+
+static ssize_t smart_proc_write(struct file *file, const char __user *buffer,
+				size_t count, loff_t *ppos)
+{
+	int c;
+
+	for_each_possible_cpu(c)
+		memset(&per_cpu(smart_stat, c), 0, sizeof(struct smart_stat));
+
+	return count;
+}
+
+#define smart_stat_print(m, field)				\
+	({							\
+		u64 res = 0;					\
+		unsigned int c;					\
+		for_each_possible_cpu(c)			\
+			res += per_cpu(smart_stat, c).field;	\
+		seq_printf(m, "%-16s %llu\n", #field, res);	\
+	})
+
+static int smart_proc_show(struct seq_file *m, void *arg)
+{
+	smart_stat_print(m, pull);
+	smart_stat_print(m, balance_local);
+	smart_stat_print(m, balance_remote);
+	smart_stat_print(m, select_core);
+	smart_stat_print(m, select_rcore);
+	smart_stat_print(m, select_thread);
+	smart_stat_print(m, select_rthread);
+	smart_stat_print(m, select_busy);
+	smart_stat_print(m, select_busy_curr);
+	smart_stat_print(m, select_fallback);
+	smart_stat_print(m, rt_pull);
+	smart_stat_print(m, rt_push);
+
+	return 0;
+}
+
+static int smart_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, smart_proc_show, NULL);
+}
+
+static const struct file_operations smart_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= smart_proc_open,
+	.read		= seq_read,
+	.write          = smart_proc_write,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+#endif
 
 struct static_key __smart_initialized = STATIC_KEY_INIT_FALSE;
 struct static_key __smart_enabled = STATIC_KEY_INIT_TRUE;
@@ -1773,6 +1834,9 @@ retry:
 out:
 	put_task_struct(next_task);
 
+	if (ret)
+		smart_event(rt_push);
+
 	return ret;
 }
 
@@ -1858,6 +1922,9 @@ static int pull_rt_task(struct rq *this_rq)
 skip:
 		double_unlock_balance(this_rq, src_rq);
 	}
+
+	if (ret)
+		smart_event(rt_pull);
 
 	return ret;
 }
@@ -2270,6 +2337,13 @@ void build_smart_topology(void)
 	if (was_initialized)
 		printk(KERN_INFO "smart: disabled\n");
 
+#ifdef CONFIG_SMART_DEBUG
+	if (!smart_pde)
+		smart_pde = proc_create("smart_stat",
+					S_IWUSR | S_IRUSR | S_IRGRP | S_IROTH,
+					NULL, &smart_proc_fops);
+#endif
+
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
 		/* __cpu_core_id */
@@ -2369,6 +2443,9 @@ static int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
 				prev_cpu = core_node_sibling(prev_cpu);
 			}
 		}
+
+		smart_event_node(task_cpu(task), prev_cpu,
+				 balance_local, balance_remote);
 	}
 
 	for (attempts = 3; attempts; attempts--) {
@@ -2376,14 +2453,20 @@ static int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
 		if (best_cpu == -1) {
 			best_cpu = find_rt_best_thread(prev_cpu, task);
 
+			smart_event_node(task_cpu(task), best_cpu,
+					 select_thread, select_rthread);
+
 			break;
 		}
 
 		if (!acquire_core(best_cpu))
 			continue;
 
-		if (likely(core_is_rt_free(best_cpu)))
+		if (likely(core_is_rt_free(best_cpu))) {
+			smart_event_node(task_cpu(task), best_cpu,
+					 select_core, select_rcore);
 			break;
+		}
 
 		release_core(best_cpu);
 	}
