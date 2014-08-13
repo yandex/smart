@@ -2753,6 +2753,8 @@ void scheduler_tick(void)
 	curr->sched_class->task_tick(rq, curr, 0);
 	raw_spin_unlock(&rq->lock);
 
+	smart_tick(cpu);
+
 	perf_event_task_tick();
 
 #ifdef CONFIG_SMP
@@ -4921,6 +4923,97 @@ static int migration_cpu_stop(void *data)
 }
 
 #ifdef CONFIG_SMART
+
+DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_gathering, smart_gathering_data);
+
+static int smart_gathering_cpu_stop(void *data)
+{
+	int this_cpu = smp_processor_id();
+	int dest_cpu = cpu_core_id(this_cpu);
+	struct rq *rq = cpu_rq(this_cpu);
+	struct task_struct *next;
+	struct smart_gathering *sg;
+	unsigned long flags;
+	int ret;
+	int iter;
+
+	WARN_ON(this_cpu == dest_cpu);
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	for (iter = 0; iter < rq->cfs.h_nr_running; iter++) {
+		next = fair_sched_class.pick_next_task(rq);
+		if (!next)
+			break;
+		next->sched_class->put_prev_task(rq, next);
+
+		if (!cpumask_test_cpu(dest_cpu, tsk_cpus_allowed(next)) ||
+		    !cpu_online(dest_cpu))
+			break;
+
+		raw_spin_unlock(&rq->lock);
+		ret = __migrate_task(next, this_cpu, dest_cpu);
+		raw_spin_lock(&rq->lock);
+
+		if (!ret)
+			break;
+	}
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+
+	sg = &smart_gathering_data(this_cpu);
+	spin_lock_irqsave(&sg->lock, flags);
+	WARN_ON(!sg->gather);
+	sg->gather = 0;
+	spin_unlock_irqrestore(&sg->lock, flags);
+
+	return 0;
+}
+
+void smart_tick(int cpu)
+{
+	unsigned long flags;
+	struct smart_gathering *sg;
+	int gather = 0;
+	struct rq *rq;
+	int core;
+	struct task_struct *curr;
+
+	if (idle_cpu(cpu) || !smart_enabled() ||
+	    !static_key_true(&smart_cfs_gather))
+		return;
+
+	rcu_read_lock();
+
+	core = cpu_core_id(cpu);
+	if (cpu != core) {
+		rq = cpu_rq(core);
+		curr = rq->curr;
+		if (rt_task(curr) && curr->mm)
+			gather = 1;
+
+		rq = cpu_rq(cpu);
+		curr = rq->curr;
+		if (rt_task(curr))
+			gather = 0;
+	}
+
+	if (gather) {
+		sg = &smart_gathering_data(cpu);
+
+		spin_lock_irqsave(&sg->lock, flags);
+		if (sg->gather)
+			gather = 0;
+		else
+			sg->gather = 1;
+		spin_unlock_irqrestore(&sg->lock, flags);
+	}
+
+	rcu_read_unlock();
+
+	if (gather)
+		stop_one_cpu_nowait(cpu, smart_gathering_cpu_stop, NULL,
+				    &sg->work);
+}
+
 int smart_migrate_task(struct task_struct *p, int prev_cpu,
 		       int dest_cpu)
 {
@@ -7093,6 +7186,11 @@ void __init sched_init(void)
 #endif
 		init_rq_hrtick(rq);
 		atomic_set(&rq->nr_iowait, 0);
+
+#ifdef CONFIG_SMART
+		spin_lock_init(&smart_gathering_data(i).lock);
+		smart_gathering_data(i).gather = 0;
+#endif
 	}
 
 	set_load_weight(&init_task);

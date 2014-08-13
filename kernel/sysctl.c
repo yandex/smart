@@ -176,6 +176,7 @@ extern int no_unaligned_warning;
 #endif
 
 #ifdef CONFIG_SMART
+struct static_key smart_cfs_gather = STATIC_KEY_INIT_TRUE;
 struct static_key smart_cfs_throttle = STATIC_KEY_INIT_TRUE;
 #endif
 

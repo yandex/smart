@@ -1394,11 +1394,19 @@ struct smart_node_data {
 	atomic_t nr_rt_running;
 } ____cacheline_aligned_in_smp;
 
+struct smart_gathering {
+	spinlock_t lock;
+	int gather;
+	struct cpu_stop_work work;
+};
+
 extern struct static_key __smart_initialized;
 extern struct static_key __smart_enabled;
+extern struct static_key smart_cfs_gather;
 extern struct static_key smart_cfs_throttle;
 
 DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_gathering, smart_gathering_data);
 extern struct smart_node_data smart_node_data[MAX_NUMNODES];
 
 static inline int cpu_core_id(int cpu)
@@ -1408,6 +1416,7 @@ static inline int cpu_core_id(int cpu)
 
 #define smart_data(cpu) per_cpu(smart_core_data, cpu_core_id(cpu))
 #define smart_node_ptr(cpu) smart_node_data[cpu_to_node(cpu)]
+#define smart_gathering_data(cpu) per_cpu(smart_gathering_data, cpu)
 
 static inline bool smart_enabled(void)
 {
@@ -1586,6 +1595,7 @@ static inline void reset_smart_score(struct sched_rt_entity *rt_se)
 	atomic_set(&rt_se->smart_score, 0);
 }
 
+void smart_tick(int cpu);
 int smart_migrate_task(struct task_struct *p, int prev_cpu, int dest_cpu);
 void build_smart_topology(void);
 
@@ -1618,6 +1628,10 @@ static inline void reset_smart_score(struct sched_rt_entity *rt_se)
 static inline bool cpu_allowed_for_cfs(int cpu)
 {
 	return true;
+}
+
+static inline void smart_tick(int cpu)
+{
 }
 
 #endif /* CONFIG_SMART */
