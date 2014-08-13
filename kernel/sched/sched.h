@@ -1418,6 +1418,89 @@ static inline int next_core(int cpu)
 	return smart_data(cpu).core_next;
 }
 
+static inline int acquire_core(int cpu)
+{
+	return (0 == atomic_cmpxchg(&smart_data(cpu).core_locked, 0, 1));
+}
+
+static inline void release_core(int cpu)
+{
+	atomic_set(&smart_data(cpu).core_locked, 0);
+}
+
+static inline int core_acquired(int cpu)
+{
+	return atomic_read(&smart_data(cpu).core_locked);
+}
+
+static inline int core_is_rt_free(int core)
+{
+	struct rq *rq;
+	int cpu;
+	unsigned int nr_rt;
+	struct task_struct *task;
+
+	for_each_cpu(cpu, topology_thread_cpumask(core)) {
+		rq = cpu_rq(cpu);
+
+		if (rq->rt.rt_throttled)
+			return 0;
+
+		nr_rt = rq->rt.rt_nr_running;
+		if (nr_rt) {
+			if (nr_rt > 1)
+				return 0;
+
+			task = ACCESS_ONCE(rq->curr);
+			if (task->mm)
+				return 0;
+		}
+	}
+
+	return 1;
+}
+
+static inline int core_rt_free_thread(int core)
+{
+	struct rq *rq;
+	int cpu;
+
+	for_each_cpu(cpu, topology_thread_cpumask(core)) {
+		rq = cpu_rq(cpu);
+
+		if (rq->rt.rt_throttled)
+			continue;
+
+		if (!rq->rt.rt_nr_running)
+			return cpu;
+	}
+
+	return -1;
+}
+
+static inline int find_rt_free_core(int start_cpu, struct task_struct *task)
+{
+	int core;
+
+	/* Local cores */
+	core = cpu_core_id(start_cpu);
+	do {
+		if (!core_acquired(core) && core_is_rt_free(core) &&
+		    cpumask_test_cpu(core, tsk_cpus_allowed(task)))
+			return core;
+	} while (core = next_core(core), core != cpu_core_id(start_cpu));
+
+	/* Remote cores */
+	core = core_node_sibling(start_cpu);
+	do {
+		if (!core_acquired(core) && core_is_rt_free(core) &&
+		    cpumask_test_cpu(core, tsk_cpus_allowed(task)))
+			return core;
+	} while (core = next_core(core), core != core_node_sibling(start_cpu));
+
+	return -1;
+}
+
 void build_smart_topology(void);
 
 #else /* CONFIG_SMART */
@@ -1428,6 +1511,10 @@ static inline void build_smart_topology(void)
 static inline bool smart_enabled(void)
 {
 	return false;
+}
+
+static inline void release_core(int cpu)
+{
 }
 
 #endif /* CONFIG_SMART */
