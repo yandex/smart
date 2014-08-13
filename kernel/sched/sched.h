@@ -1501,6 +1501,49 @@ static inline int find_rt_free_core(int start_cpu, struct task_struct *task)
 	return -1;
 }
 
+static inline int find_rt_best_thread(int start_cpu, struct task_struct *task)
+{
+	int core;
+	int cpu;
+	struct rq *rq;
+	unsigned int min_running = 2;
+	int best_cpu = -1;
+	int nr_running;
+
+	/* Local cores */
+	core = cpu_core_id(start_cpu);
+	do {
+		cpu = core_rt_free_thread(core);
+		if (cpu != -1 && cpumask_test_cpu(cpu, tsk_cpus_allowed(task)))
+			return cpu;
+	} while (core = next_core(core), core != cpu_core_id(start_cpu));
+
+	/* Remote cores */
+	core = core_node_sibling(start_cpu);
+	do {
+		cpu = core_rt_free_thread(core);
+		if (cpu != -1 && cpumask_test_cpu(cpu, tsk_cpus_allowed(task)))
+			return cpu;
+	} while (core = next_core(core), core != core_node_sibling(start_cpu));
+
+	/* Find local thread with min. number of tasks */
+	for_each_cpu(cpu, topology_core_cpumask(start_cpu)) {
+		rq = cpu_rq(cpu);
+		nr_running = rq->rt.rt_nr_running;
+		if (nr_running < min_running &&
+		    cpumask_test_cpu(cpu, tsk_cpus_allowed(task))) {
+			min_running = nr_running;
+			best_cpu = cpu;
+		}
+	}
+
+	if (best_cpu != -1 &&
+	    min_running == cpu_rq(start_cpu)->rt.rt_nr_running)
+		best_cpu = -1;
+
+	return best_cpu;
+}
+
 void build_smart_topology(void);
 
 #else /* CONFIG_SMART */

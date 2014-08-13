@@ -2286,4 +2286,36 @@ void build_smart_topology(void)
 	mutex_unlock(&smart_mutex);
 }
 
+static int smart_find_lowest_rq(struct task_struct *task, bool wakeup)
+{
+	int prev_cpu = task_cpu(task);
+	int best_cpu;
+	int attempts;
+
+	if (task->nr_cpus_allowed == 1)
+		return -1; /* No other targets possible */
+
+	rcu_read_lock();
+
+
+	for (attempts = 3; attempts; attempts--) {
+		best_cpu = find_rt_free_core(prev_cpu, task);
+		if (best_cpu == -1) {
+			best_cpu = find_rt_best_thread(prev_cpu, task);
+
+			break;
+		}
+
+		if (!acquire_core(best_cpu))
+			continue;
+
+		if (likely(core_is_rt_free(best_cpu)))
+			break;
+
+		release_core(best_cpu);
+	}
+
+	rcu_read_unlock();
+	return best_cpu;
+}
 #endif /* CONFIG_SMART */
