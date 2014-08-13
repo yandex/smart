@@ -6536,6 +6536,7 @@ static int init_sched_domains(const struct cpumask *cpu_map)
 		doms_cur = &fallback_doms;
 	cpumask_andnot(doms_cur[0], cpu_map, cpu_isolated_map);
 	err = build_sched_domains(doms_cur[0], NULL);
+	build_smart_topology();
 	register_sched_domain_sysctl();
 
 	return err;
@@ -6656,6 +6657,8 @@ match2:
 	ndoms_cur = ndoms_new;
 
 	register_sched_domain_sysctl();
+
+	build_smart_topology();
 
 	mutex_unlock(&sched_domains_mutex);
 }
