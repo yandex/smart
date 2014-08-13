@@ -11,6 +11,7 @@
 #include <linux/jump_label.h>
 
 struct static_key __smart_initialized = STATIC_KEY_INIT_FALSE;
+struct static_key __smart_enabled = STATIC_KEY_INIT_TRUE;
 DEFINE_MUTEX(smart_mutex);
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
@@ -2201,6 +2202,9 @@ void build_smart_topology(void)
 {
 	int cpu;
 	int was_initialized;
+
+	if (!static_key_enabled(&__smart_enabled))
+		return;
 
 	mutex_lock(&smart_mutex);
 

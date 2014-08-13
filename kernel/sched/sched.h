@@ -6,6 +6,7 @@
 #include <linux/spinlock.h>
 #include <linux/stop_machine.h>
 #include <linux/tick.h>
+#include <linux/jump_label.h>
 
 #include "cpupri.h"
 #include "cpuacct.h"
@@ -1390,6 +1391,7 @@ struct smart_core_data {
 } ____cacheline_aligned_in_smp;
 
 extern struct static_key __smart_initialized;
+extern struct static_key __smart_enabled;
 
 DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
 
@@ -1399,6 +1401,12 @@ static inline int cpu_core_id(int cpu)
 }
 
 #define smart_data(cpu) per_cpu(smart_core_data, cpu_core_id(cpu))
+
+static inline bool smart_enabled(void)
+{
+	return static_key_false(&__smart_initialized) &&
+		static_key_true(&__smart_enabled);
+}
 
 static inline int core_node_sibling(int cpu)
 {
@@ -1415,6 +1423,11 @@ void build_smart_topology(void);
 #else /* CONFIG_SMART */
 static inline void build_smart_topology(void)
 {
+}
+
+static inline bool smart_enabled(void)
+{
+	return false;
 }
 
 #endif /* CONFIG_SMART */
