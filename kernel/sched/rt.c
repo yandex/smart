@@ -7,6 +7,15 @@
 
 #include <linux/slab.h>
 
+#ifdef CONFIG_SMART
+#include <linux/jump_label.h>
+
+struct static_key __smart_initialized = STATIC_KEY_INIT_FALSE;
+DEFINE_MUTEX(smart_mutex);
+
+DEFINE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+#endif /* CONFIG_SMART */
+
 int sched_rr_timeslice = RR_TIMESLICE;
 
 static int do_sched_rt_period_timer(struct rt_bandwidth *rt_b, int overrun);
@@ -2114,3 +2123,163 @@ void print_rt_stats(struct seq_file *m, int cpu)
 	rcu_read_unlock();
 }
 #endif /* CONFIG_SCHED_DEBUG */
+
+#ifdef CONFIG_SMART
+int check_smart_data(void)
+{
+	int cpu, core;
+	int iterations;
+
+	for_each_online_cpu(cpu) {
+		if (cpu_core_id(cpu) == -1 || next_core(cpu) == -1 ||
+		    core_node_sibling(cpu) == -1)
+			goto error;
+
+		if (!cpumask_test_cpu(cpu_core_id(cpu), cpu_online_mask))
+			goto error;
+
+		if (!cpumask_test_cpu(core_node_sibling(cpu), cpu_online_mask))
+			goto error;
+
+		iterations = 0;
+		core = cpu_core_id(cpu);
+		do {
+			if (core == -1)
+				goto error;
+			if (++iterations > NR_CPUS)
+				goto error;
+		} while (core = next_core(core), core != cpu_core_id(cpu));
+
+		iterations = 0;
+		core = core_node_sibling(cpu);
+		do {
+			if (core == -1)
+				goto error;
+			if (++iterations > NR_CPUS)
+				goto error;
+		} while (core = next_core(core), core != core_node_sibling(cpu));
+
+	}
+
+	return 0;
+
+error:
+	printk(KERN_INFO "smart: init error (cpu %d core %d next %d sibling %d)\n",
+	       cpu, cpu_core_id(cpu), next_core(cpu),  core_node_sibling(cpu));
+	return -1;
+}
+
+static int number_of_cpu(int cpu, cpumask_t *mask)
+{
+	int tmp;
+	int count = 0;
+
+	for_each_cpu(tmp, mask) {
+		if (tmp == cpu)
+			return count;
+		count++;
+	}
+
+	return -1;
+}
+
+static int cpu_with_number(int number, cpumask_t *mask)
+{
+	int tmp;
+	int count = 0;
+
+	for_each_cpu(tmp, mask) {
+		if (count == number)
+			return tmp;
+		count++;
+	}
+
+	return -1;
+}
+
+void build_smart_topology(void)
+{
+	int cpu;
+	int was_initialized;
+
+	mutex_lock(&smart_mutex);
+
+	was_initialized = static_key_enabled(&__smart_initialized);
+	if (was_initialized)
+		static_key_slow_dec(&__smart_initialized);
+	synchronize_rcu();
+
+	if (was_initialized)
+		printk(KERN_INFO "smart: disabled\n");
+
+	get_online_cpus();
+	for_each_online_cpu(cpu) {
+		/* __cpu_core_id */
+		per_cpu(smart_core_data, cpu).cpu_core_id =
+			cpumask_first(topology_thread_cpumask(cpu));
+		if (per_cpu(smart_core_data, cpu).cpu_core_id < 0 ||
+		    per_cpu(smart_core_data, cpu).cpu_core_id >= nr_cpu_ids)
+			per_cpu(smart_core_data, cpu).cpu_core_id = cpu;
+
+		atomic_set(&per_cpu(smart_core_data, cpu).core_locked, 0);
+	}
+
+	rcu_read_lock();
+	for_each_online_cpu(cpu) {
+		struct sched_domain *sd;
+
+		/* core_node_sibling */
+		smart_data(cpu).core_node_sibling = -1;
+		for_each_domain(cpu, sd) {
+			struct sched_group *sg, *next_sg;
+			int number;
+
+			if (sd->flags & SD_SHARE_PKG_RESOURCES)
+				continue;
+
+			sg = sd->groups;
+			next_sg = sg->next;
+
+			if (sg == next_sg)
+				continue;
+
+			number = number_of_cpu(cpu, sched_group_cpus(sg));
+			if (number != -1) {
+				int sibling = cpu_with_number(number,
+							      sched_group_cpus(next_sg));
+				if (sibling != -1)
+					smart_data(cpu).core_node_sibling = cpu_core_id(sibling);
+			}
+		}
+
+		/* local_core_list */
+		smart_data(cpu).core_next = -1;
+		for_each_domain(cpu, sd) {
+			if (sd->flags & SD_SHARE_CPUPOWER)
+				continue;
+
+			if (likely(sd->groups)) {
+				struct sched_group *sg = sd->groups->next;
+				int next = group_first_cpu(sg);
+
+				if (next < nr_cpu_ids)
+					smart_data(cpu).core_next = cpu_core_id(next);
+			}
+
+			break;
+		}
+	}
+
+	if (!check_smart_data()) {
+		printk(KERN_INFO "smart: enabled\n");
+		static_key_slow_inc(&__smart_initialized);
+	}
+
+	rcu_read_unlock();
+
+	put_online_cpus();
+
+	mutex_unlock(&smart_mutex);
+}
+
+#endif /* CONFIG_SMART */

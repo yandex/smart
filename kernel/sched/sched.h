@@ -1378,3 +1378,43 @@ static inline u64 irq_time_read(int cpu)
 }
 #endif /* CONFIG_64BIT */
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
+
+#ifdef CONFIG_SMART
+struct smart_core_data {
+	int cpu_core_id;
+
+	/* Per core data, use smart_data macro for access */
+	int core_next;
+	int core_node_sibling;
+	atomic_t core_locked;
+} ____cacheline_aligned_in_smp;
+
+extern struct static_key __smart_initialized;
+
+DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+
+static inline int cpu_core_id(int cpu)
+{
+	return per_cpu(smart_core_data, cpu).cpu_core_id;
+}
+
+#define smart_data(cpu) per_cpu(smart_core_data, cpu_core_id(cpu))
+
+static inline int core_node_sibling(int cpu)
+{
+	return smart_data(cpu).core_node_sibling;
+}
+
+static inline int next_core(int cpu)
+{
+	return smart_data(cpu).core_next;
+}
+
+void build_smart_topology(void);
+
+#else /* CONFIG_SMART */
+static inline void build_smart_topology(void)
+{
+}
+
+#endif /* CONFIG_SMART */
