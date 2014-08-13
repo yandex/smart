@@ -1436,7 +1436,11 @@ static struct task_struct *_pick_next_task_rt(struct rq *rq)
 	if (!rt_rq->rt_nr_running)
 		return NULL;
 
+#ifdef CONFIG_SMART
+	if (rt_rq_throttled(rt_rq) && rq->cfs.h_nr_running)
+#else
 	if (rt_rq_throttled(rt_rq))
+#endif
 		return NULL;
 
 	do {

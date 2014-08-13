@@ -1396,6 +1396,7 @@ struct smart_node_data {
 
 extern struct static_key __smart_initialized;
 extern struct static_key __smart_enabled;
+extern struct static_key smart_cfs_throttle;
 
 DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
 extern struct smart_node_data smart_node_data[MAX_NUMNODES];
@@ -1452,6 +1453,21 @@ static inline void dec_node_running(int cpu)
 static inline int node_running(int node)
 {
 	return atomic_read(&smart_node_data[node].nr_rt_running);
+}
+
+static inline bool cpu_allowed_for_cfs(int cpu)
+{
+	struct rq *rq;
+	int core = cpu_core_id(cpu);
+
+	if (!smart_enabled() || !static_key_true(&smart_cfs_throttle))
+		return true;
+
+	if (cpu == core)
+		return true;
+
+	rq = cpu_rq(core);
+	return (!rq->rt.rt_nr_running || rq->rt.rt_throttled);
 }
 
 static inline int core_is_rt_free(int core)
@@ -1597,6 +1613,11 @@ static inline void dec_node_running(int cpu)
 
 static inline void reset_smart_score(struct sched_rt_entity *rt_se)
 {
+}
+
+static inline bool cpu_allowed_for_cfs(int cpu)
+{
+	return true;
 }
 
 #endif /* CONFIG_SMART */

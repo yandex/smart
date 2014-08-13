@@ -3285,6 +3285,9 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu)
 
 	/* Traverse only the allowed CPUs */
 	for_each_cpu_and(i, sched_group_cpus(group), tsk_cpus_allowed(p)) {
+		if (!cpu_allowed_for_cfs(i))
+			continue;
+
 		load = weighted_cpuload(i);
 
 		if (load < min_load || (load == min_load && i == this_cpu)) {
@@ -3305,13 +3308,14 @@ static int select_idle_sibling(struct task_struct *p, int target)
 	struct sched_group *sg;
 	int i = task_cpu(p);
 
-	if (idle_cpu(target))
+	if (idle_cpu(target) && cpu_allowed_for_cfs(target))
 		return target;
 
 	/*
 	 * If the prevous cpu is cache affine and idle, don't be stupid.
 	 */
-	if (i != target && cpus_share_cache(i, target) && idle_cpu(i))
+	if (i != target && cpus_share_cache(i, target) && idle_cpu(i) &&
+	    cpu_allowed_for_cfs(i))
 		return i;
 
 	/*
@@ -3326,12 +3330,15 @@ static int select_idle_sibling(struct task_struct *p, int target)
 				goto next;
 
 			for_each_cpu(i, sched_group_cpus(sg)) {
-				if (i == target || !idle_cpu(i))
+				if (i == target || !idle_cpu(i) ||
+				    !cpu_allowed_for_cfs(i))
 					goto next;
 			}
 
 			target = cpumask_first_and(sched_group_cpus(sg),
 					tsk_cpus_allowed(p));
+			if (!cpu_allowed_for_cfs(target))
+				goto next;
 			goto done;
 next:
 			sg = sg->next;
@@ -3366,7 +3373,8 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 		return prev_cpu;
 
 	if (sd_flag & SD_BALANCE_WAKE) {
-		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
+		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)) &&
+		    cpu_allowed_for_cfs(cpu))
 			want_affine = 1;
 		new_cpu = prev_cpu;
 	}
@@ -3929,6 +3937,9 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	 * 4) are cache-hot on their current CPU.
 	 */
 	if (throttled_lb_pair(task_group(p), env->src_cpu, env->dst_cpu))
+		return 0;
+
+	if (!cpu_allowed_for_cfs(env->dst_cpu))
 		return 0;
 
 	if (!cpumask_test_cpu(env->dst_cpu, tsk_cpus_allowed(p))) {
@@ -5191,7 +5202,8 @@ more_balance:
 			 * moved to this_cpu
 			 */
 			if (!cpumask_test_cpu(this_cpu,
-					tsk_cpus_allowed(busiest->curr))) {
+					tsk_cpus_allowed(busiest->curr)) ||
+			    !cpu_allowed_for_cfs(this_cpu)) {
 				raw_spin_unlock_irqrestore(&busiest->lock,
 							    flags);
 				env.flags |= LBF_ALL_PINNED;
@@ -5269,6 +5281,9 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 	unsigned long next_balance = jiffies + HZ;
 
 	this_rq->idle_stamp = this_rq->clock;
+
+	if (!cpu_allowed_for_cfs(this_cpu))
+		return;
 
 	if (this_rq->avg_idle < sysctl_sched_migration_cost)
 		return;
