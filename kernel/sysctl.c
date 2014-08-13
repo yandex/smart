@@ -167,6 +167,10 @@ extern int unaligned_dump_stack;
 extern int no_unaligned_warning;
 #endif
 
+#ifdef CONFIG_SMART
+struct static_key smart_cfs_throttle = STATIC_KEY_INIT_TRUE;
+#endif
+
 #ifdef CONFIG_PROC_SYSCTL
 
 #define SYSCTL_WRITES_LEGACY	-1
