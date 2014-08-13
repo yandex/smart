@@ -282,19 +282,26 @@ const_debug unsigned int sysctl_sched_nr_migrate = 32;
  */
 const_debug unsigned int sysctl_sched_time_avg = MSEC_PER_SEC;
 
+#ifdef CONFIG_SMART
+#define DEFAULT_SCHED_RT_PERIOD 100000
+#define DEFAULT_SCHED_RT_RUNTIME 99000
+
+#else
+#define DEFAULT_SCHED_RT_PERIOD 1000000
+#define DEFAULT_SCHED_RT_RUNTIME 950000
+#endif
+
 /*
  * period over which we measure -rt task cpu usage in us.
- * default: 1s
  */
-unsigned int sysctl_sched_rt_period = 1000000;
+unsigned int sysctl_sched_rt_period = DEFAULT_SCHED_RT_PERIOD;
 
 __read_mostly int scheduler_running;
 
 /*
  * part of the period that we allow rt tasks to run in us.
- * default: 0.95s
  */
-int sysctl_sched_rt_runtime = 950000;
+int sysctl_sched_rt_runtime = DEFAULT_SCHED_RT_RUNTIME;
 
 
 
