@@ -1559,10 +1559,15 @@ struct smart_core_data {
 	atomic_t core_locked;
 } ____cacheline_aligned_in_smp;
 
+struct smart_node_data {
+	atomic_t nr_rt_running;
+} ____cacheline_aligned_in_smp;
+
 extern struct static_key __smart_initialized;
 extern struct static_key __smart_enabled;
 
 DECLARE_PER_CPU_SHARED_ALIGNED(struct smart_core_data, smart_core_data);
+extern struct smart_node_data smart_node_data[MAX_NUMNODES];
 
 static inline int cpu_core_id(int cpu)
 {
@@ -1570,6 +1575,7 @@ static inline int cpu_core_id(int cpu)
 }
 
 #define smart_data(cpu) per_cpu(smart_core_data, cpu_core_id(cpu))
+#define smart_node_ptr(cpu) smart_node_data[cpu_to_node(cpu)]
 
 static inline bool smart_enabled(void)
 {
@@ -1600,6 +1606,21 @@ static inline void release_core(int cpu)
 static inline int core_acquired(int cpu)
 {
 	return atomic_read(&smart_data(cpu).core_locked);
+}
+
+static inline void inc_node_running(int cpu)
+{
+	atomic_inc(&smart_node_ptr(cpu).nr_rt_running);
+}
+
+static inline void dec_node_running(int cpu)
+{
+	atomic_dec(&smart_node_ptr(cpu).nr_rt_running);
+}
+
+static inline int node_running(int node)
+{
+	return atomic_read(&smart_node_data[node].nr_rt_running);
 }
 
 static inline int core_is_rt_free(int core)
@@ -1726,6 +1747,14 @@ static inline bool smart_enabled(void)
 }
 
 static inline void release_core(int cpu)
+{
+}
+
+static inline void inc_node_running(int cpu)
+{
+}
+
+static inline void dec_node_running(int cpu)
 {
 }
 
