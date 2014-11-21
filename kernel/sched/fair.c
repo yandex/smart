@@ -4151,7 +4151,7 @@ static int
 find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu)
 {
 	unsigned long load, min_load = ULONG_MAX;
-	int idlest = -1;
+	int idlest = this_cpu;
 	int i;
 
 	/* Traverse only the allowed CPUs */
